@@ -1,74 +1,144 @@
-import time
-import copy
+import random
+import math
 
-def check_winner(board, player):
-    win_conditions = [(0,1,2), (3,4,5), (6,7,8), (0,3,6), (1,4,7), (2,5,8), (0,4,8), (2,4,6)]  
-    return any(all(board[pos] == player for pos in condition) for condition in win_conditions)  
+ 
+CITIES = {0: (2, 3), 1: (5, 4), 2: (1, 7), 3: (6, 8), 4: (9, 2), 5: (4, 6), 6: (8, 7), 7: (3, 9)}
 
-class AlphaBetaPruning:
-    def __init__(self, board, depth=9):
-        self.max_depth = depth  
-        self.nodes_expanded = 0 
+def distance(c1, c2):
+     
+    return math.sqrt((c1[0]-c2[0])**2 + (c1[1]-c2[1])**2)
 
-    def alphabeta(self, state, depth, alpha, beta, maximizing_player):
-        self.nodes_expanded += 1  
+def total_distance(route, cities):
+     
+    dist = 0
+    for i in range(len(route)):
+        dist += distance(cities[route[i]], cities[route[(i+1) % len(route)]])
+    return dist
+
+def fitness(route, cities):
+     
+    return 1 / total_distance(route, cities)
+
+def initialize_population(size, num_cities):
+     
+    pop = []
+    base = list(range(num_cities))
+    for _ in range(size):
+        route = base[:]
+        random.shuffle(route)
+        pop.append(route)
+    return pop
+
+def crossover_ox(p1, p2):
+     
+    size = len(p1)
+    a, b = sorted(random.sample(range(size), 2))
+    
+    def fill_child(parent1, parent2, start, end):
+        child = [None] * size
+        child[start:end+1] = parent1[start:end+1]
         
-        # Terminal check [cite: 114, 115]
-        if check_winner(state, 'O'): return 1
-        if check_winner(state, 'X'): return -1
-        if ' ' not in state or depth == 0: return 0
+        p2_remaining = [item for item in parent2 if item not in child]
+        idx = 0
+        for i in range(size):
+            if child[i] is None:
+                child[i] = p2_remaining[idx]
+                idx += 1
+        return child
 
-        if maximizing_player:
-            v = float('-inf')
-            for i in range(9):
-                if state[i] == ' ':
-                    state[i] = 'O'
-                    v = max(v, self.alphabeta(state, depth - 1, alpha, beta, False))
-                    state[i] = ' '
-                    alpha = max(alpha, v)  
-                    if beta <= alpha: break # PRUNE [cite: 101, 102]
-            return v
-        else:
-            v = float('inf')
-            for i in range(9):
-                if state[i] == ' ':
-                    state[i] = 'X'
-                    v = min(v, self.alphabeta(state, depth - 1, alpha, beta, True))
-                    state[i] = ' '
-                    beta = min(beta, v)  
-                    if beta <= alpha: break # PRUNE [cite: 101, 102]
-            return v
+    return fill_child(p1, p2, a, b), fill_child(p2, p1, a, b)
 
-    def best_move(self, state):
-        start_time = time.time()
-        self.nodes_expanded = 0
-        best_v = float('-inf')
-        move = -1
-        for i in range(9):
-            if state[i] == ' ':
-                state[i] = 'O'
-                # Initialize alpha as -infinity and beta as +infinity [cite: 5, 121]
-                val = self.alphabeta(state, self.max_depth - 1, float('-inf'), float('inf'), False)
-                state[i] = ' '
-                if val > best_v:
-                    best_v = val
-                    move = i
-        duration = time.time() - start_time
-        return move, self.nodes_expanded, duration
+def mutate_swap(route, rate):
+     
+    if random.random() < rate:
+        idx1, idx2 = random.sample(range(len(route)), 2)
+        route[idx1], route[idx2] = route[idx2], route[idx1]
 
-def run_cases():
-    test_board = ['X', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ']
-    depths = [9, 4, 2]
+def genetic_algorithm(cities, selection_method):
+    pop_size, gens, mut_rate = 30, 100, 0.05
+    pop = initialize_population(pop_size, len(cities))
+    best_route = None
+    max_fit = -1
+
+    for _ in range(gens):
+        fits = [fitness(r, cities) for r in pop]
+        
+        for i, f in enumerate(fits):
+            if f > max_fit:
+                max_fit = f
+                best_route = pop[i][:]
+
+        new_pop = []
+        while len(new_pop) < pop_size:
+            # Selection Dispatcher 1
+            if selection_method == '1':
+                # Simple Roulette implementation for TSP
+                total_f = sum(fits)
+                pick = random.uniform(0, total_f)
+                curr = 0
+                for i, f in enumerate(fits):
+                    curr += f
+                    if curr > pick:
+                        p1 = pop[i]; break
+                p2 = random.choice(pop) # Simplified second parent
+            else:
+                # Tournament [cite: 238, 268]
+                def tourney():
+                    s = random.sample(range(pop_size), 3)
+                    return pop[max(s, key=lambda i: fits[i])]
+                p1, p2 = tourney(), tourney()
+
+            c1, c2 = crossover_ox(p1, p2)
+            mutate_swap(c1, mut_rate)
+            mutate_swap(c2, mut_rate)
+            new_pop.extend([c1, c2])
+        pop = new_pop[:pop_size]
     
-    print("TASK 02: Alpha-Beta Pruning Performance Test")
-    print(f"{'Depth':<10} | {'Move':<6} | {'Nodes Expanded':<15} | {'Time (s)':<10}")
-    print("-" * 55)
+    return best_route, max_fit
+
+def main():
+    print("TSP Genetic Algorithm")
+    method = input("Select Selection (1: Roulette, 2: Tournament): ")
+    best_route, best_fit = genetic_algorithm(CITIES, method)
     
-    for d in depths:
-        ab = AlphaBetaPruning(test_board, depth=d)
-        move, nodes, taken = ab.best_move(copy.deepcopy(test_board))
-        print(f"{d:<10} | {move:<6} | {nodes:<15} | {taken:<10.5f}")
+    # Display results [cite: 281-287]
+    print("\n--- Best Route Found ---")
+    print(f"Route: {best_route}")
+    print(f"Total Distance: {total_distance(best_route, CITIES):.2f}")
+    print(f"Fitness Value: {best_fit:.6f}")
+    print(f"Method Used: {'Roulette' if method=='1' else 'Tournament'}")
 
 if __name__ == "__main__":
-    run_cases()
+    main()
+
+
+
+# --- TEST SCRIPT FOR TASK 02 ---
+def test_tsp():
     
+     
+    square_cities = {
+        0: (0, 0),
+        1: (0, 10),
+        2: (10, 10),
+        3: (10, 0)
+    }
+
+    print("\n--- Running TSP Test Case (Square Path) ---")
+    
+    
+    best_route, best_fit = genetic_algorithm(square_cities, selection_method='2')
+    
+    dist = total_distance(best_route, square_cities)  
+    
+    print(f"Best Route Found: {best_route}")  
+    print(f"Total Distance: {dist:.2f}") 
+    print(f"Fitness (1/Dist): {best_fit:.6f}")  
+    
+    
+    if round(dist) == 40:
+        print("Result: PASS (Optimal Path Found)")
+    else:
+        print("Result: CHECK (GA found a valid but perhaps sub-optimal path)")
+
+test_tsp()
